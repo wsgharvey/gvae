@@ -123,8 +123,13 @@ class GraphiteEncoder(nn.Module):
         stddevs = log_stddevs.exp()
         return torch.distributions.Normal(means, stddevs)
 
-class GraphiteVAE(ptu.Trainable, ptu.CudaCompatibleMixin):
+class GraphiteVAE(ptu.Trainable, ptu.CudaCompatibleMixin, ptu.HasDataloaderMixin):
+    p_Z = torch.distributions.Normal(0, 1)
+
     def init_nn(self, n, latent_dim, encoder_hidden_dim, decoder_hidden_dim):
+        self.n = n
+        self.latent_dim = latent_dim
+        # init neural nets
         self.encoder = GraphiteEncoder(
             n, initial_dim=encoder_hidden_dim,
             hidden_dim=encoder_hidden_dim, latent_dim=latent_dim)
@@ -133,20 +138,30 @@ class GraphiteVAE(ptu.Trainable, ptu.CudaCompatibleMixin):
             final_dim=decoder_hidden_dim)
 
     def elbo(self, A):
-        p_Z = torch.distributions.Normal(0, 1)
         q_Z = self.encoder(A)
         Z = q_Z.sample()
         p_A_given_Z = self.decoder(Z)
         estimated_elbo = p_A_given_Z.log_prob(A).sum() \
-            + p_Z.log_prob(Z).sum() \
+            + self.p_Z.log_prob(Z).sum() \
             - q_Z.log_prob(Z).sum()
         return estimated_elbo
 
+    def sample(self):
+        Z = self.p_Z.sample((self.n, self.latent_dim))
+        p_A_given_Z = self.decoder(Z)
+        return p_A_given_Z.sample()
+
+    def sample_reconstruction_mean(self, A):
+        q_Z = self.encoder(A)
+        Z = q_Z.sample()
+        print(Z)
+        p_A_given_Z = self.decoder(Z)
+        return p_A_given_Z.probs
+
     def loss(self, A):
         elbo = self.elbo(A)
-        self.log = {'elbo', elbo.item()}
+        self.log = {'elbo': elbo.item()}
         return -elbo
-
 
 
 
